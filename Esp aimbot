@@ -1,0 +1,364 @@
+local Players = game:GetService("Players")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local Workspace = game:GetService("Workspace")
+local LocalPlayer = Players.LocalPlayer
+local Camera = Workspace.CurrentCamera
+local buttonTable = {}
+local lockEnabled = false
+local targetPlayer = nil
+local buttonsVisible = true
+local clearObstructionsEnabled = false
+local removedParts = {}
+local distanceEnabled = false
+
+-- UI Elements
+local screenGui = Instance.new("ScreenGui")
+screenGui.ResetOnSpawn = false
+screenGui.Parent = LocalPlayer.PlayerGui
+
+local mainMenu = Instance.new("Frame")
+mainMenu.Size = UDim2.new(0, 150, 0, 200)
+mainMenu.Position = UDim2.new(0, 25, 0, 25)
+mainMenu.BackgroundColor3 = Color3.new(0.1, 0.1, 0.1)
+mainMenu.Parent = screenGui
+
+local expandButton = Instance.new("TextButton")
+expandButton.Size = UDim2.new(0, 50, 0, 50)
+expandButton.Position = UDim2.new(0, 25, 0, 0)
+expandButton.Text = "+"
+expandButton.Parent = screenGui
+
+local menuVisible = false
+local function toggleMainMenu()
+    menuVisible = not menuVisible
+    mainMenu.Visible = menuVisible
+    expandButton.Text = menuVisible and "-" or "+"
+end
+expandButton.MouseButton1Click:Connect(toggleMainMenu)
+
+local draggingMenu = false
+local dragStart, startPos
+mainMenu.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 and input.MouseButton1Down then
+        draggingMenu = true
+        dragStart = input.Position
+        startPos = mainMenu.Position
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if draggingMenu and input.UserInputType == Enum.UserInputType.MouseMovement then
+        local delta = input.Position - dragStart
+        mainMenu.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+    end
+end)
+
+mainMenu.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 then
+        draggingMenu = false
+    end
+end)
+
+-- Buttons
+local toggleButtonsButton = Instance.new("TextButton")
+toggleButtonsButton.Size = UDim2.new(0, 100, 0, 30)
+toggleButtonsButton.Position = UDim2.new(0, 25, 0, 10)
+toggleButtonsButton.Text = "Hide Buttons"
+toggleButtonsButton.Parent = mainMenu
+
+local cancelAllButton = Instance.new("TextButton")
+cancelAllButton.Size = UDim2.new(0, 100, 0, 30)
+cancelAllButton.Position = UDim2.new(0, 25, 0, 50)
+cancelAllButton.Text = "Cancel All"
+cancelAllButton.Parent = mainMenu
+
+local clearObstructionsButton = Instance.new("TextButton")
+clearObstructionsButton.Size = UDim2.new(0, 100, 0, 30)
+clearObstructionsButton.Position = UDim2.new(0, 25, 0, 90)
+clearObstructionsButton.Text = "Toggle Obstruction"
+clearObstructionsButton.Parent = mainMenu
+
+local restorePartsButton = Instance.new("TextButton")
+restorePartsButton.Size = UDim2.new(0, 100, 0, 30)
+restorePartsButton.Position = UDim2.new(0, 25, 0, 130)
+restorePartsButton.Text = "Restore Parts"
+restorePartsButton.Parent = mainMenu
+
+local toggleDistanceButton = Instance.new("TextButton")
+toggleDistanceButton.Size = UDim2.new(0, 100, 0, 30)
+toggleDistanceButton.Position = UDim2.new(0, 25, 0, 170)
+toggleDistanceButton.Text = "Toggle Distance"
+toggleDistanceButton.Parent = mainMenu
+
+local restartButton = Instance.new("TextButton")
+restartButton.Size = UDim2.new(0, 100, 0, 30)
+restartButton.Position = UDim2.new(0, 25, 0, 210)
+restartButton.Text = "Restart Script"
+restartButton.Parent = mainMenu
+
+-- Function to create lock button
+local function createLockButton(player)
+    if player ~= LocalPlayer then
+        local button = Instance.new("ImageButton")
+        button.Size = UDim2.new(0, 50, 0, 50)
+        button.Image = "rbxassetid://6031068420"
+        button.BackgroundTransparency = 1
+        button.Parent = screenGui
+        button.ImageColor3 = Color3.new(0, 1, 0)
+        button.Visible = buttonsVisible
+
+        button.MouseButton1Click:Connect(function()
+            if targetPlayer == player then
+                lockEnabled = false
+                targetPlayer = nil
+                button.ImageColor3 = Color3.new(0, 1, 0)
+            else
+                lockEnabled = true
+                targetPlayer = player
+                button.ImageColor3 = Color3.new(1, 0, 0)
+            end
+        end)
+
+        buttonTable[player] = { button = button }
+
+        RunService.RenderStepped:Connect(function()
+            if player.Character and player.Character:FindFirstChild("Head") then
+                local head = player.Character.Head
+                local headPosition, onScreen = Camera:WorldToViewportPoint(head.Position)
+                if onScreen and (LocalPlayer.Character.Head.Position - head.Position).magnitude < 200000 then
+                    button.Position = UDim2.new(0, headPosition.X - 25, 0, headPosition.Y - 50)
+                    button.Visible = buttonsVisible
+                else
+                    button.Visible = false
+                end
+            else
+                button.Visible = false
+            end
+        end)
+
+        player.CharacterAdded:Connect(function(character)
+            local humanoid = character:WaitForChild("Humanoid")
+            humanoid.Died:Connect(function()
+                if targetPlayer == player then
+                    lockEnabled = false
+                    targetPlayer = nil
+                    button.ImageColor3 = Color3.new(0, 1, 0)
+                end
+            end)
+        end)
+    end
+end
+
+-- Function to create distance label
+local function createDistanceLabel(player)
+    if player ~= LocalPlayer then
+        local distanceLabel = Instance.new("TextLabel")
+        distanceLabel.Size = UDim2.new(0, 50, 0, 15) -- Smaller size
+        distanceLabel.BackgroundTransparency = 1
+        distanceLabel.TextColor3 = Color3.new(1, 1, 1)
+        distanceLabel.TextScaled = true
+        distanceLabel.Parent = screenGui
+        distanceLabel.Visible = false
+
+        local lastUpdateTime = os.clock()
+
+        RunService.RenderStepped:Connect(function()
+            if distanceEnabled and player.Character and player.Character:FindFirstChild("Head") and LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Head") then
+                local head = player.Character.Head
+                local localHead = LocalPlayer.Character.Head
+                local distance = (localHead.Position - head.Position).magnitude
+                distance = math.floor(distance * 10) / 10 
+                local headPosition, onScreen = Camera:WorldToViewportPoint(head.Position)
+
+                if onScreen then
+                    distanceLabel.Position = UDim2.new(0, headPosition.X - 25, 0, headPosition.Y - 65)
+                    distanceLabel.Text = tostring(distance) .. " m"
+
+                    if os.clock() - lastUpdateTime >= 1 then
+                        local r = math.random()
+                        local g = math.random()
+                        local b = math.random()
+                        distanceLabel.TextColor3 = Color3.new(r, g, b)
+                        lastUpdateTime = os.clock()
+                    end
+
+                    distanceLabel.Visible = true
+                else
+                    distanceLabel.Visible = false
+                end
+            else
+                distanceLabel.Visible = false
+            end
+        end)
+    end
+end
+
+-- Obstruction
+local function checkObstruction(player)
+    if player and player.Character and player.Character:FindFirstChild("Head") then
+        local headPosition = player.Character.Head.Position
+        local ray = Ray.new(Camera.CFrame.Position, (headPosition - Camera.CFrame.Position).unit * 500)
+        local part = Workspace:FindPartOnRayWithIgnoreList(ray, {LocalPlayer.Character, player.Character})
+        return part ~= nil
+    end
+    return false
+end
+
+local function updateObstructionStatus()
+    for player, btnInfo in pairs(buttonTable) do
+        local obstructed = checkObstruction(player)
+        btnInfo.button.ImageTransparency = obstructed and 0 or 1
+    end
+end
+RunService.RenderStepped:Connect(updateObstructionStatus)
+
+local lastObstructionCheck = 0
+local obstructionDelay = 0.3
+
+local function clearObstructions()
+    if clearObstructionsEnabled then
+        if targetPlayer and targetPlayer.Character and targetPlayer.Character:FindFirstChild("Head") then
+            local headPosition = targetPlayer.Character.Head.Position
+            local ray = Ray.new(LocalPlayer.Character.Head.Position, (headPosition - LocalPlayer.Character.Head.Position).unit * 500)
+            local part = Workspace:FindPartOnRayWithIgnoreList(ray, {LocalPlayer.Character, targetPlayer.Character})
+            if part then
+                if part:FindFirstChild("CollisionGroup") then
+                    table.insert(removedParts, part:FindFirstChild("CollisionGroup"))
+                    part:FindFirstChild("CollisionGroup"):Destroy()
+                end
+                table.insert(removedParts, part)
+                part.Parent = nil
+            end
+        end
+    end
+end
+
+local function restoreParts()
+    for i, part in ipairs(removedParts) do
+        if part and part.Parent == nil then
+            part.Parent = Workspace
+            if part.ClassName == "CollisionGroup" then
+                part.Parent = part.Parent.Parent
+            end
+            table.remove(removedParts, i)
+        end
+    end
+end
+
+RunService.RenderStepped:Connect(function()
+    if clearObstructionsEnabled then
+        if targetPlayer and targetPlayer.Character and targetPlayer.Character:FindFirstChild("Head") then
+            if os.clock() - lastObstructionCheck >= obstructionDelay then
+                lastObstructionCheck = os.clock()
+                local headPosition = targetPlayer.Character.Head.Position
+                local ray = Ray.new(Camera.CFrame.Position, (headPosition - Camera.CFrame.Position).unit * 500)
+                local part = Workspace:FindPartOnRayWithIgnoreList(ray, {LocalPlayer.Character, targetPlayer.Character})
+                if part then
+                    if part:FindFirstChild("CollisionGroup") then
+                        table.insert(removedParts, part:FindFirstChild("CollisionGroup"))
+                        part:FindFirstChild("CollisionGroup"):Destroy()
+                    end
+                    table.insert(removedParts, part)
+                    part.Parent = nil
+                else
+                    restoreParts()
+                end
+            end
+        end
+    end
+end)
+
+-- Button Events
+toggleButtonsButton.MouseButton1Click:Connect(function()
+    buttonsVisible = not buttonsVisible
+    for _, buttonInfo in pairs(buttonTable) do
+        buttonInfo.button.Visible = buttonsVisible
+    end
+    toggleButtonsButton.Text = buttonsVisible and "Hide Buttons" or "Show Buttons"
+end)
+
+cancelAllButton.MouseButton1Click:Connect(function()
+    lockEnabled = false
+    targetPlayer = nil
+    for _, btnInfo in pairs(buttonTable) do
+        btnInfo.button.ImageColor3 = Color3.new(0, 1, 0)
+        btnInfo.button.Active = true
+    end
+end)
+
+clearObstructionsButton.MouseButton1Click:Connect(function()
+    clearObstructionsEnabled = not clearObstructionsEnabled
+    clearObstructionsButton.Text = clearObstructionsEnabled and "Obstruction On" or "Obstruction Off"
+end)
+
+restorePartsButton.MouseButton1Click:Connect(function()
+    for _, part in pairs(removedParts) do
+        if part and part.Parent == nil then
+            part.Parent = Workspace
+        end
+    end
+    removedParts = {}
+end)
+
+toggleDistanceButton.MouseButton1Click:Connect(function()
+    distanceEnabled = not distanceEnabled
+    toggleDistanceButton.Text = distanceEnabled and "Distance On" or "Distance Off"
+end)
+
+restartButton.MouseButton1Click:Connect(function()
+    -- Reset UI and variables
+    screenGui:ClearAllChildren()
+    buttonTable = {}
+    lockEnabled = false
+    targetPlayer = nil
+    buttonsVisible = true
+    clearObstructionsEnabled = false
+    removedParts = {}
+    distanceEnabled = false
+
+    -- Recreate UI elements
+    mainMenu.Size = UDim2.new(0, 150, 0, 200)
+    mainMenu.Position = UDim2.new(0, 25, 0, 25)
+    mainMenu.BackgroundColor3 = Color3.new(0.1, 0.1, 0.1)
+    mainMenu.Parent = screenGui
+
+    expandButton.Size = UDim2.new(0, 50, 0, 50)
+    expandButton.Position = UDim2.new(0, 25, 0, 0)
+    expandButton.Text = "+"
+    expandButton.Parent = screenGui
+
+    menuVisible = false
+    toggleMainMenu()
+
+    -- Recreate buttons
+    toggleButtonsButton.Parent = mainMenu
+    cancelAllButton.Parent = mainMenu
+    clearObstructionsButton.Parent = mainMenu
+    restorePartsButton.Parent = mainMenu
+    toggleDistanceButton.Parent = mainMenu
+    restartButton.Parent = mainMenu
+
+    -- Recreate lock buttons and distance labels
+    for _, player in pairs(Players:GetPlayers()) do
+        createLockButton(player)
+        createDistanceLabel(player)
+    end
+end)
+
+-- Player Events
+Players.PlayerAdded:Connect(function(player)
+    createLockButton(player)
+    createDistanceLabel(player)
+end)
+for _, player in pairs(Players:GetPlayers()) do
+    createLockButton(player)
+    createDistanceLabel(player)
+end
+
+-- Camera
+RunService.RenderStepped:Connect(function()
+    if lockEnabled and targetPlayer and targetPlayer.Character and targetPlayer.Character:FindFirstChild("Head") then
+        Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, targetPlayer.Character.Head.Position)
+    end
+end)
